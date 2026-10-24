@@ -2,7 +2,8 @@
 
     python tools/screenshot.py out.png [照片路径]
 
-不传照片路径时会自动生成一张测试图。开发时用它检查界面排版。
+不传照片路径时优先用仓库自带的 samples/demo.jpg；它不存在才现画一张测试图。
+开发时用它检查界面排版。
 """
 
 from __future__ import annotations
@@ -65,7 +66,7 @@ def demo_photo(path: Path) -> None:
 
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    out = Path(args[0]) if args else Path("screenshot.png")
+    out = Path(args[0]) if args else Path("docs/screenshot-ui.png")
     # 沙箱里系统临时目录可能不可写，tempfile 会退回到当前目录；用独立子目录，用完就删，
     # 免得仓库根目录里多出一张 openlight_demo.jpg。
     workdir = Path(tempfile.mkdtemp(prefix="openlight-screenshot-"))
@@ -76,8 +77,9 @@ def main() -> int:
 
 
 def render(out: Path, args: list[str], workdir: Path) -> int:
-    photo = Path(args[1]) if len(args) > 1 else workdir / "demo.jpg"
+    photo = Path(args[1]) if len(args) > 1 else ROOT / "samples" / "demo.jpg"
     if not photo.exists():
+        photo = workdir / "demo.jpg"
         demo_photo(photo)
 
     app = QApplication.instance() or QApplication(sys.argv)

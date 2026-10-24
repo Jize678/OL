@@ -10,7 +10,7 @@
 由同一个内核执行。所以不存在「界面上能点、接口里没有」的功能，
 也不存在「agent 改了但人不知道」的黑箱。
 
-![界面截图](docs/screenshot.png)
+![界面截图](docs/screenshot-ui.png)
 
 ## 当前版本 v0.2（Demo）
 

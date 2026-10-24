@@ -5,6 +5,8 @@ __pycache__/
 .vscode/
 *.openlight.json
 *.preview.png
+# 测试脚本的临时目录：系统 temp 不可写时 tempfile 会退回到仓库根
+openlight-*/
 dist/
 build/
 *.spec

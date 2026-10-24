@@ -19,13 +19,21 @@ COLORS = {
 }
 
 
-def stylesheet() -> str:
+def stylesheet(font_family: str | None = None) -> str:
+    """整段 QSS。
+
+    ``font_family`` 是启动时由 ``ui.fonts.ensure_cjk_font()`` 解析出来的、确认能画
+    中文的字族；放在字体栈最前面，后面的仍然是常规的跨平台兜底。
+    """
     c = COLORS
+    stack = '"Microsoft YaHei UI", "Segoe UI", "Noto Sans SC", sans-serif'
+    if font_family:
+        stack = f'"{font_family}", ' + stack
     return f"""
     QWidget {{
         background: {c['bg']};
         color: {c['text']};
-        font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+        font-family: {stack};
         font-size: 12px;
     }}
     QMainWindow::separator {{ background: {c['border']}; width: 1px; height: 1px; }}
@@ -45,6 +53,11 @@ def stylesheet() -> str:
     QToolButton:hover {{ background: {c['panel_alt']}; border-color: {c['border']}; }}
     QToolButton:checked {{ background: {c['accent_dim']}; border-color: {c['accent']}; }}
     QToolButton:disabled {{ color: {c['text_dim']}; }}
+    /* 分组标题：不要抢眼球的蓝底，展开与否由箭头表达 */
+    QToolButton#sectionHeader {{ background: transparent; border: 1px solid transparent;
+                                 border-radius: 5px; padding: 4px 6px; font-weight: 600; }}
+    QToolButton#sectionHeader:hover {{ background: {c['panel_alt']}; border-color: {c['border']}; }}
+    QToolButton#sectionHeader:checked {{ background: transparent; border-color: transparent; }}
 
     QStatusBar {{ background: {c['panel']}; border-top: 1px solid {c['border']}; }}
     QStatusBar::item {{ border: none; }}
@@ -70,6 +83,9 @@ def stylesheet() -> str:
         border-radius: 4px; padding: 3px 6px; selection-background-color: {c['accent']};
     }}
     QDoubleSpinBox:focus, QSpinBox:focus, QLineEdit:focus {{ border-color: {c['accent']}; }}
+    /* Fusion 的上下箭头在深色底上是一条看不清的灰线，干脆只留输入（拖滑杆调值） */
+    QDoubleSpinBox::up-button, QDoubleSpinBox::down-button,
+    QSpinBox::up-button, QSpinBox::down-button {{ width: 0; border: none; }}
 
     QPushButton {{ background: {c['panel_alt']}; border: 1px solid {c['border']};
                    border-radius: 5px; padding: 5px 12px; }}

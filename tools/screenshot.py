@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -34,7 +35,8 @@ from openlight.api.server import ApiServer  # noqa: E402
 from openlight.config import Settings  # noqa: E402
 from openlight.core.invoker import MainThreadInvoker  # noqa: E402
 from openlight.core.session import Session  # noqa: E402
-from openlight.ui import theme  # noqa: E402
+from openlight.ui import fonts  # noqa: E402
+from openlight.ui.app import configure_app  # noqa: E402
 from openlight.ui.main_window import MainWindow  # noqa: E402
 
 
@@ -64,13 +66,22 @@ def demo_photo(path: Path) -> None:
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     out = Path(args[0]) if args else Path("screenshot.png")
-    photo = Path(args[1]) if len(args) > 1 else Path(tempfile.gettempdir()) / "openlight_demo.jpg"
+    # 沙箱里系统临时目录可能不可写，tempfile 会退回到当前目录；用独立子目录，用完就删，
+    # 免得仓库根目录里多出一张 openlight_demo.jpg。
+    workdir = Path(tempfile.mkdtemp(prefix="openlight-screenshot-"))
+    try:
+        return render(out, args, workdir)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def render(out: Path, args: list[str], workdir: Path) -> int:
+    photo = Path(args[1]) if len(args) > 1 else workdir / "demo.jpg"
     if not photo.exists():
         demo_photo(photo)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setStyle("Fusion")
-    app.setStyleSheet(theme.stylesheet())
+    family = configure_app(app)
 
     settings = Settings()
     settings.api_port = 0
@@ -112,9 +123,22 @@ def main() -> int:
         time.sleep(0.01)
 
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    # 出图前先审一遍字体：宁可不出图，也不出一张满屏方框的图。
+    problems = fonts.audit_widgets(window)
+    if problems:
+        print("截图已取消：界面里有字符缺字形（渲染出来会是豆腐块）：")
+        for line in problems[:20]:
+            print("  - " + line)
+        print("可以设置环境变量 OPENLIGHT_FONT 指向一个中文字体文件后重试。")
+        window.close()          # closeEvent 里会 renderer.shutdown()，否则进程退出时崩
+        api.stop()
+        return 2
+
     pixmap = window.grab()
     pixmap.save(str(out))
-    print(f"已保存界面截图：{out}（{pixmap.width()}x{pixmap.height()}）")
+    print(f"已保存界面截图：{out}（{pixmap.width()}x{pixmap.height()}，字体 {family or '默认'}）")
+    window.close()
     api.stop()
     return 0
 

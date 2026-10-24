@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import io
+import shutil
 import sys
 import tempfile
 import urllib.request
@@ -51,6 +53,8 @@ def http_json(url: str, payload: dict | None = None, method: str = "GET") -> dic
 
 def main() -> int:
     workdir = Path(tempfile.mkdtemp(prefix="openlight-apitest-"))
+    # 沙箱里系统临时目录可能不可写，tempfile 会退回到当前目录；用完就删，别脏了仓库。
+    atexit.register(shutil.rmtree, workdir, ignore_errors=True)
     source = workdir / "shot.jpg"
     ramp = np.tile(np.linspace(10, 250, 640, dtype=np.uint8), (480, 1))
     Image.fromarray(np.dstack([ramp, ramp, ramp]), "RGB").save(source, quality=95)
@@ -147,10 +151,12 @@ def main() -> int:
               "initialize 握手成功")
         tools = handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         names = [t["name"] for t in tools["result"]["tools"]]
-        check(len(names) >= 13, f"tools/list 返回 {len(names)} 个工具：{', '.join(names[:3])}…")
+        check(len(names) >= 20, f"tools/list 返回 {len(names)} 个工具")
         check({"openlight_schema", "openlight_set_adjustment", "openlight_set_curve",
-               "openlight_adjust"} <= set(names),
-              "MCP 暴露了通用调整 / 曲线 / 批量 / 自述文档四个工具")
+               "openlight_adjust", "openlight_measure", "openlight_history",
+               "openlight_reset_all", "openlight_close_image", "openlight_save_preview",
+               "openlight_save_recipe", "openlight_load_recipe"} <= set(names),
+              "MCP 工具覆盖全部命令（含关闭 / 复位全部 / 历史 / 量测 / 预览 / 配方）")
         check(all("inputSchema" in t for t in tools["result"]["tools"]),
               "每个工具都带 JSON Schema")
         set_via_mcp = handle_request({
@@ -188,6 +194,65 @@ def main() -> int:
         })
         check("curve_blue" in curve_via_mcp["result"]["content"][0]["text"],
               "MCP 能设置曲线")
+
+        measure = handle_request({
+            "jsonrpc": "2.0", "id": 8, "method": "tools/call",
+            "params": {"name": "openlight_measure", "arguments": {"max_side": 256}},
+        })
+        measure_blocks = measure["result"]["content"]
+        measure_text = measure_blocks[0]["text"]
+        check("平均亮度" in measure_text and "削波" in measure_text
+              and all(block.get("type") != "image" for block in measure_blocks),
+              "openlight_measure 只回数字不回图（省上下文）")
+
+        history = handle_request({
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {"name": "openlight_history", "arguments": {"limit": 5}},
+        })
+        history_text = history["result"]["content"][0]["text"]
+        check("历史共" in history_text and "可撤销" in history_text,
+              "openlight_history 能列历史栈")
+
+        saved_preview = handle_request({
+            "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+            "params": {"name": "openlight_save_preview",
+                       "arguments": {"path": str(workdir / "look.png"), "max_side": 320}},
+        })
+        check((workdir / "look.png").exists(),
+              "openlight_save_preview 落盘：" + saved_preview["result"]["content"][0]["text"].split("\n")[0])
+
+        recipe_saved = handle_request({
+            "jsonrpc": "2.0", "id": 11, "method": "tools/call",
+            "params": {"name": "openlight_save_recipe", "arguments": {}},
+        })
+        check("配方已保存" in recipe_saved["result"]["content"][0]["text"]
+              and source.with_name(source.name + ".openlight.json").exists(),
+              "openlight_save_recipe 生成 sidecar")
+
+        reset_all = handle_request({
+            "jsonrpc": "2.0", "id": 12, "method": "tools/call",
+            "params": {"name": "openlight_reset_all", "arguments": {}},
+        })
+        check("回到原图" in reset_all["result"]["content"][0]["text"],
+              "openlight_reset_all 一键回原图")
+
+        loaded = handle_request({
+            "jsonrpc": "2.0", "id": 13, "method": "tools/call",
+            "params": {"name": "openlight_load_recipe", "arguments": {}},
+        })
+        loaded_text = loaded["result"]["content"][0]["text"]
+        check("exposure" in loaded_text or "contrast" in loaded_text,
+              "openlight_load_recipe 把配方读回来")
+
+        closed = handle_request({
+            "jsonrpc": "2.0", "id": 14, "method": "tools/call",
+            "params": {"name": "openlight_close_image", "arguments": {}},
+        })
+        check("已关闭" in closed["result"]["content"][0]["text"],
+              "openlight_close_image 关闭照片（工具不再谎报成功）")
+        check(invoke_tool("openlight_measure", {}).get("isError"),
+              "没有照片时量测工具返回 isError")
+
         unknown = invoke_tool("no_such_tool", {})
         check(unknown.get("isError"), "未知工具返回 isError")
 

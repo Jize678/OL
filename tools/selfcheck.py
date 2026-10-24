@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import atexit
 import base64
 import io
+import shutil
 import sys
 import tempfile
 import time
@@ -88,6 +90,8 @@ def render(params: dict, source_path: Path) -> Image.Image:
 
 def main() -> int:
     workdir = Path(tempfile.mkdtemp(prefix="openlight-selfcheck-"))
+    # 沙箱里系统临时目录可能不可写，tempfile 会退回到当前目录；用完就删，别脏了仓库。
+    atexit.register(shutil.rmtree, workdir, ignore_errors=True)
     source = workdir / "sample.jpg"
     make_test_image(source)
     print(f"临时目录：{workdir}\n")

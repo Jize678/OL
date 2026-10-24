@@ -102,20 +102,24 @@ curl -s http://127.0.0.1:8765/command -H "Content-Type: application/json" -d "{\
 }
 ```
 
-挂上之后 agent 就多了这些工具（13 个）：
+挂上之后 agent 就多了这些工具（20 个，覆盖全部命令）：
 
 | 工具 | 作用 |
 | --- | --- |
 | `openlight_schema` | 自述文档：42 个参数的名字、范围、语义、用法建议 |
 | `openlight_status` | 当前照片、当前生效的调整、可撤销步数 |
-| `openlight_open_image` | 打开照片 |
+| `openlight_open_image` / `openlight_close_image` | 打开 / 关闭照片 |
 | `openlight_adjust` | 一次设置多个参数（少往返，一步历史） |
 | `openlight_set_adjustment` | 设置任意一个参数（标量或曲线） |
 | `openlight_set_curve` | 设置 RGB / 红 / 绿 / 蓝 曲线 |
 | `openlight_set_exposure` | 调曝光（带画面统计和建议） |
+| `openlight_measure` | 只量不拍：平均亮度、削波比例、实际生效的处理级 |
 | `openlight_see_image` | 把当前画面作为图片喂给多模态模型 |
-| `openlight_reset` / `openlight_undo` / `openlight_redo` | 复位 / 撤销 / 重做 |
+| `openlight_save_preview` | 把预览存成 PNG 文件（不占上下文） |
+| `openlight_reset` / `openlight_reset_all` | 复位一项 / 复位全部 |
+| `openlight_undo` / `openlight_redo` / `openlight_history` | 撤销 / 重做 / 查看历史栈 |
 | `openlight_export` | 导出全分辨率成品 |
+| `openlight_save_recipe` / `openlight_load_recipe` | 存 / 载 sidecar 配方 |
 | `openlight_runs` | 回看操作记录（含人的手动操作） |
 
 它可以「调一次 → 看一次图 → 再调」，像人一样反复确认。

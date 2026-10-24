@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtCore import QTimer
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 from .. import APP_NAME, __version__
@@ -13,8 +14,36 @@ from ..api.server import ApiServer
 from ..config import Settings
 from ..core.invoker import MainThreadInvoker
 from ..core.session import Session
-from . import theme
+from . import fonts, theme
 from .main_window import MainWindow
+
+
+def _install_font(app: QApplication) -> str:
+    """解析一个确认能画中文的字族并设成全局字体。
+
+    正常桌面直接命中系统字库；离屏渲染（截图/测试）下字体库可能是空的，
+    ``fonts`` 会把系统字体文件注册进去。真的一个中文字体都没有时只警告一次，
+    让界面照常起来 —— 这时候豆腐块是环境问题，不是界面的错。
+    """
+    try:
+        family = fonts.ensure_cjk_font()
+    except fonts.FontUnavailable as exc:
+        print(f"[openLight] 警告：{exc}", file=sys.stderr)
+        return ""
+    app.setFont(QFont(family, 9))
+    return family
+
+
+def configure_app(app: QApplication) -> str:
+    """界面统一初始化：Fusion 风格 + 中文字体 + 深色 QSS。
+
+    GUI 入口和 tools/screenshot.py、tools/uitest.py 都走这个函数，
+    保证「截图里看到的」就是「用户看到的」。
+    """
+    app.setStyle("Fusion")
+    family = _install_font(app)
+    app.setStyleSheet(theme.stylesheet(family))
+    return family
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,8 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(__version__)
-    app.setStyle("Fusion")
-    app.setStyleSheet(theme.stylesheet())
+    configure_app(app)
 
     settings = Settings.load()
     session = Session(settings)

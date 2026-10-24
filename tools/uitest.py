@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -39,7 +41,8 @@ from openlight.api.server import ApiServer  # noqa: E402
 from openlight.config import Settings  # noqa: E402
 from openlight.core.invoker import MainThreadInvoker  # noqa: E402
 from openlight.core.session import Session  # noqa: E402
-from openlight.ui import theme  # noqa: E402
+from openlight.ui import fonts  # noqa: E402
+from openlight.ui.app import configure_app  # noqa: E402
 from openlight.ui.main_window import MainWindow  # noqa: E402
 
 RESULTS: list[tuple[bool, str]] = []
@@ -61,6 +64,8 @@ def pump(app: QApplication, invoker: MainThreadInvoker, seconds: float = 0.6) ->
 
 def main() -> int:
     workdir = Path(tempfile.mkdtemp(prefix="openlight-uitest-"))
+    # 沙箱里系统临时目录可能不可写，tempfile 会退回到当前目录；用完就删，别脏了仓库。
+    atexit.register(shutil.rmtree, workdir, ignore_errors=True)
     source = workdir / "scene.jpg"
     height, width = 900, 1400
     ramp = np.tile(np.linspace(20, 235, width, dtype=np.uint8), (height, 1))
@@ -71,8 +76,7 @@ def main() -> int:
     Image.fromarray(tint, "RGB").save(source, quality=95)
 
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setStyle("Fusion")
-    app.setStyleSheet(theme.stylesheet())
+    family = configure_app(app)
 
     settings = Settings()
     settings.api_port = 0
@@ -87,7 +91,12 @@ def main() -> int:
     pump(app, invoker, 0.3)
 
     try:
-        print("1) 初始状态")
+        print("1) 初始状态与字体")
+        check(bool(family) and not fonts.missing_glyphs("色温色调曝光曲线混色器", family),
+              f"选中了能画中文的字体：{family or '（无）'}")
+        font_problems = fonts.audit_widgets(window)
+        check(not font_problems, "窗口里的文字都有字形，不会出现豆腐块"
+              + ("" if not font_problems else "：" + "；".join(font_problems[:3])))
         check(not window.canvas.has_image(), "没有照片时画布为空")
         check(window.empty_overlay.isVisible(), "显示空状态提示")
         check(not window.action_export.isEnabled(), "没照片时导出按钮禁用")
@@ -284,6 +293,9 @@ def main() -> int:
               f"HTTP 过来的命令同样驱动了界面（当前 {row.value()}）")
 
         print("\n12) 关闭清理")
+        dynamic = fonts.audit_widgets(window)
+        check(not dynamic, "操作后的动态文案同样没有豆腐块"
+              + ("" if not dynamic else "：" + "；".join(dynamic[:3])))
         window.close()
         pump(app, invoker, 0.3)
         check(True, "关闭窗口没有异常")

@@ -124,6 +124,7 @@ HSL 混色器一共 8×3 = 24 个参数，例如 `hsl_blue_lum`（压暗蓝色�
 app.info              软件信息 + 服务地址
 app.schema            自述文档（命令 + 调整项）
 document.open         {"path": "D:\\a.jpg"}
+document.close        关闭当前照片（换一张继续编辑时用）
 document.state        当前照片与参数
 adjustment.set        {"id": "exposure", "value": 0.5}      任意参数（曲线也可以）
 adjustment.reset      {"id": "exposure"}
@@ -136,6 +137,7 @@ preview.get           base64 预览 + 统计
 preview.save          预览存成 PNG 文件（推荐，省带宽）
 export.image          {"path": "D:\\out.jpg", "overwrite": false}
 recipe.save           sidecar 配方（<文件>.openlight.json）
+recipe.reload         从 sidecar 重新载入（覆盖当前参数，一步历史）
 events.list           最近发生了什么（含人的手动操作）
 ```
 

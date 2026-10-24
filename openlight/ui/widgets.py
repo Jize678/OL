@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import fonts
 from .theme import COLORS
 
 SLIDER_SCALE = 100  # 滑块用整数，除以 100 得到 0.01 精度的浮点值
@@ -176,7 +177,9 @@ class CollapsibleSection(QWidget):
         self.header.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
         self.header.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.header.setCursor(Qt.PointingHandCursor)
-        self.header.setStyleSheet("QToolButton { border: none; font-weight: 600; }")
+        # 分组标题是侧栏的骨架：必须一直有字（曾经忘了 setText，整条标题栏是空白）。
+        self.header.setObjectName("sectionHeader")
+        self.set_title(title)
 
         self.badge = QLabel("")
         self.badge.setStyleSheet(f"color:{COLORS['accent']};")
@@ -318,6 +321,11 @@ class AgentConsole(QPlainTextEdit):
         font = QFont("Cascadia Mono")
         font.setStyleHint(QFont.Monospace)
         font.setPointSize(9)
+        # 等宽字体一般不带汉字，事件摘要里的中文会变成方框：
+        # 把启动时解析出的中文字族接在后面当兜底（Qt 会按字逐个回退）。
+        fallback = fonts.default_family()
+        if fallback and fallback != "Cascadia Mono":
+            font.setFamilies(["Cascadia Mono", fallback])
         self.setFont(font)
         self.setPlaceholderText("这里会实时显示命令总线上的所有操作（灰色＝人操作，绿色＝agent 操作）")
 

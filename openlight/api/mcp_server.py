@@ -21,6 +21,7 @@ from .server import resolve_base_url as resolve_service_url
 
 PROTOCOL_VERSION = "2024-11-05"
 DEFAULT_PORT = 8765
+_IDENTITY_CURVE = [[0.0, 0.0], [1.0, 1.0]]
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +85,11 @@ def tool_definitions() -> list[dict]:
                 "properties": {"path": {"type": "string", "description": "照片的绝对路径"}},
                 "required": ["path"],
             },
+        },
+        {
+            "name": "openlight_close_image",
+            "description": "关闭当前照片并清空历史记录（想换一张照片继续编辑时用）。",
+            "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "openlight_schema",
@@ -173,6 +179,11 @@ def tool_definitions() -> list[dict]:
             },
         },
         {
+            "name": "openlight_reset_all",
+            "description": "把全部 42 个调整项恢复默认值（回到原图）。只占一步历史，可以撤销。",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
             "name": "openlight_undo",
             "description": "撤销上一步调整。",
             "inputSchema": {"type": "object", "properties": {}},
@@ -181,6 +192,18 @@ def tool_definitions() -> list[dict]:
             "name": "openlight_redo",
             "description": "重做被撤销的调整。",
             "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "openlight_history",
+            "description": (
+                "查看历史栈：能否撤销/重做，以及每一步是谁（人还是 agent）做了什么。"
+                "接手别人的现场时，先看它比问人更快。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer", "default": 20,
+                                         "description": "最多列多少步（从最近的一步往前数）。"}},
+            },
         },
         {
             "name": "openlight_see_image",
@@ -197,6 +220,36 @@ def tool_definitions() -> list[dict]:
             },
         },
         {
+            "name": "openlight_measure",
+            "description": (
+                "只量不拍：返回平均亮度、高光/暗部削波比例和实际生效的处理级，不带图片。"
+                "比 openlight_see_image 省上下文，适合「改一次、量一次」的快速迭代；"
+                "要判断构图和观感时再用 see_image。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "max_side": {"type": "integer", "default": 512,
+                                 "description": "统计用的预览长边，越小越快。"}
+                },
+            },
+        },
+        {
+            "name": "openlight_save_preview",
+            "description": (
+                "把当前预览存成 PNG 文件（不占上下文）。想让人打开看、或者做前后对比图时用它。"
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string",
+                             "description": "省略时存成原图同目录的 <原名>.preview.png"},
+                    "max_side": {"type": "integer", "default": 1400,
+                                 "description": "预览长边像素"},
+                },
+            },
+        },
+        {
             "name": "openlight_export",
             "description": "按当前调整把全分辨率成品导出到文件。默认不覆盖已有文件，也不会覆盖原图。",
             "inputSchema": {
@@ -208,6 +261,19 @@ def tool_definitions() -> list[dict]:
                     "overwrite": {"type": "boolean", "default": False},
                 },
             },
+        },
+        {
+            "name": "openlight_save_recipe",
+            "description": (
+                "把当前调整写成 sidecar 配方（<原名>.openlight.json）。"
+                "下次打开这张照片会自动套用，也是把风格搬到另一张照片的载体。"
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "openlight_load_recipe",
+            "description": "从 sidecar 配方重新载入调整（覆盖当前参数，只占一步历史）。",
+            "inputSchema": {"type": "object", "properties": {}},
         },
         {
             "name": "openlight_runs",
@@ -249,6 +315,10 @@ def invoke_tool(name: str, arguments: dict) -> dict:
     if name == "openlight_open_image":
         payload, error = call("document.open", {"path": arguments.get("path")})
         return _simple(payload, error, "已打开")
+
+    if name == "openlight_close_image":
+        payload, error = call("document.close")
+        return _simple(payload, error, "已关闭当前照片，历史记录已清空。")
 
     if name == "openlight_schema":
         payload, error = call("app.schema")
@@ -320,10 +390,9 @@ def invoke_tool(name: str, arguments: dict) -> dict:
                 f"高光削波 {stats.get('clipped_highlights_pct')}%，"
                 f"暗部削波 {stats.get('clipped_shadows_pct')}%"
             )
-            if stats.get("clipped_highlights_pct", 0) > 5:
-                lines.append("提示：高光削波偏多，建议减小曝光值。")
-            elif stats.get("mean_luma", 0.5) < 0.28:
-                lines.append("提示：画面整体偏暗，可以考虑再提亮一点。")
+            hint = _stats_hint(stats)
+            if hint:
+                lines.append("提示：" + hint)
         if preview_error:
             lines.append(f"（预览统计获取失败：{preview_error}）")
         return {"content": [_text("\n".join(lines))]}
@@ -333,6 +402,14 @@ def invoke_tool(name: str, arguments: dict) -> dict:
         payload, error = call("adjustment.reset", {"id": adjustment_id})
         return _simple(payload, error, f"{adjustment_id} 已恢复默认值")
 
+    if name == "openlight_reset_all":
+        payload, error = call("adjustments.reset_all")
+        if error or not payload or not payload.get("ok"):
+            return _simple(payload, error, "")
+        return {"content": [_text(
+            "全部调整已恢复默认值，画面回到原图。可以用 openlight_undo 撤销这一步。"
+        )]}
+
     if name == "openlight_undo":
         payload, error = call("history.undo")
         return _simple(payload, error, "已撤销")
@@ -340,6 +417,24 @@ def invoke_tool(name: str, arguments: dict) -> dict:
     if name == "openlight_redo":
         payload, error = call("history.redo")
         return _simple(payload, error, "已重做")
+
+    if name == "openlight_history":
+        payload, error = call("history.state")
+        if error or not payload or not payload.get("ok"):
+            return _simple(payload, error, "")
+        result = payload["result"]
+        entries = result.get("entries") or []
+        if not entries:
+            return {"content": [_text("历史为空：还没有打开照片。")]}
+        limit = max(1, int(arguments.get("limit") or 20))
+        cursor = int(result.get("cursor", -1))
+        lines = [f"历史共 {result.get('count', len(entries))} 步，当前位置第 {cursor + 1} 步；"
+                 f"可撤销：{result.get('can_undo')}，可重做：{result.get('can_redo')}"]
+        for index in range(max(0, len(entries) - limit), len(entries)):
+            entry = entries[index]
+            mark = "  ← 当前" if index == cursor else ""
+            lines.append(f"  #{index + 1} {entry.get('label')} [{entry.get('source')}]{mark}")
+        return {"content": [_text("\n".join(lines))]}
 
     if name == "openlight_see_image":
         max_side = int(arguments.get("max_side") or 1024)
@@ -358,6 +453,39 @@ def invoke_tool(name: str, arguments: dict) -> dict:
             ]
         }
 
+    if name == "openlight_measure":
+        max_side = int(arguments.get("max_side") or 512)
+        payload, error = call("preview.get", {"max_side": max_side})
+        if error or not payload or not payload.get("ok"):
+            return _simple(payload, error, "")
+        result = payload["result"]
+        stats = result.get("stats") or {}
+        lines = [
+            f"预览 {result.get('width')}x{result.get('height')}（长边 {max_side}）",
+            f"画面统计：平均亮度 {stats.get('mean_luma')}，"
+            f"高光削波 {stats.get('clipped_highlights_pct')}%，"
+            f"暗部削波 {stats.get('clipped_shadows_pct')}%，增益 x{stats.get('gain')}",
+            "生效的调整级：" + ("、".join(stats.get("applied") or []) or "无（画面等于原图）"),
+        ]
+        hint = _stats_hint(stats)
+        if hint:
+            lines.append("提示：" + hint)
+        return {"content": [_text("\n".join(lines))]}
+
+    if name == "openlight_save_preview":
+        params = {k: v for k, v in arguments.items() if v is not None}
+        payload, error = call("preview.save", params)
+        if error or not payload or not payload.get("ok"):
+            return _simple(payload, error, "")
+        result = payload["result"]
+        stats = result.get("stats") or {}
+        text = f"预览已保存：{result['path']}（{result['width']}x{result['height']}）"
+        if stats:
+            text += (f"\n画面统计：平均亮度 {stats.get('mean_luma')}，"
+                     f"高光削波 {stats.get('clipped_highlights_pct')}%，"
+                     f"暗部削波 {stats.get('clipped_shadows_pct')}%")
+        return {"content": [_text(text)]}
+
     if name == "openlight_export":
         params = {k: v for k, v in arguments.items() if v is not None}
         payload, error = call("export.image", params)
@@ -368,6 +496,26 @@ def invoke_tool(name: str, arguments: dict) -> dict:
             f"已导出：{result['path']}\n"
             f"尺寸 {result['width']}x{result['height']}，格式 {result['format']}，"
             f"应用的调整：{json.dumps(result['adjustments'], ensure_ascii=False)}"
+        )]}
+
+    if name == "openlight_save_recipe":
+        payload, error = call("recipe.save")
+        if error or not payload or not payload.get("ok"):
+            return _simple(payload, error, "")
+        result = payload["result"]
+        active = _active_only((result.get("recipe") or {}).get("adjustments") or {})
+        text = (f"配方已保存：{result['path']}\n下次打开这张照片会自动套用。\n当前调整："
+                + (json.dumps(active, ensure_ascii=False) if active else "全部默认"))
+        return {"content": [_text(text)]}
+
+    if name == "openlight_load_recipe":
+        payload, error = call("recipe.reload")
+        if error or not payload or not payload.get("ok"):
+            return _simple(payload, error, "")
+        active = _active_only(payload["result"].get("adjustments") or {})
+        return {"content": [_text(
+            "已从 sidecar 载入调整。\n生效的调整："
+            + (json.dumps(active, ensure_ascii=False) if active else "全部默认")
         )]}
 
     if name == "openlight_runs":
@@ -383,6 +531,35 @@ def invoke_tool(name: str, arguments: dict) -> dict:
         return {"content": [_text("\n".join(lines) or "没有新事件。")]}
 
     return {"isError": True, "content": [_text(f"未知工具：{name}")]}
+
+
+def _active_only(values: dict) -> dict:
+    """回执只列偏离默认值的项：42 个参数全打出来，重点反而被淹掉。"""
+    active = {}
+    for key, value in values.items():
+        if isinstance(value, (int, float)) and abs(float(value)) < 1e-9:
+            continue
+        if value == _IDENTITY_CURVE:
+            continue
+        active[key] = value
+    return active
+
+
+def _stats_hint(stats: dict) -> str:
+    """把画面统计翻译成一句能直接照做的建议；一切正常时返回空串。"""
+    highlights = float(stats.get("clipped_highlights_pct") or 0.0)
+    shadows = float(stats.get("clipped_shadows_pct") or 0.0)
+    mean = stats.get("mean_luma")
+    if highlights > 5.0:
+        return f"高光削波 {highlights:.2f}% 偏多，先回收曝光或压高光。"
+    if shadows > 5.0:
+        return f"暗部削波 {shadows:.2f}% 偏多，可以提阴影或曝光。"
+    if mean is not None:
+        if float(mean) < 0.28:
+            return "画面整体偏暗，可以提亮一点。"
+        if float(mean) > 0.72:
+            return "画面整体偏亮，可以压暗一点。"
+    return ""
 
 
 def _adjustment_receipt(payload: dict | None, error: str | None) -> dict:
@@ -401,8 +578,9 @@ def _adjustment_receipt(payload: dict | None, error: str | None) -> dict:
                  f"高光削波 {stats.get('clipped_highlights_pct')}%，"
                  f"暗部削波 {stats.get('clipped_shadows_pct')}%")
         text += "\n生效的调整级：" + "、".join(stats.get("applied") or [])
-        if stats.get("clipped_highlights_pct", 0) > 5:
-            text += "\n提示：高光削波偏多，考虑回退一点。"
+        hint = _stats_hint(stats)
+        if hint:
+            text += "\n提示：" + hint
     elif preview_error:
         text += f"\n（画面统计取不到：{preview_error}）"
     return {"content": [_text(text)]}
@@ -439,9 +617,13 @@ def handle_request(message: dict) -> dict | None:
                 "典型流程：openlight_schema 看有哪些参数 -> openlight_open_image 打开照片 -> "
                 "openlight_see_image 看当前画面 -> openlight_adjust / openlight_set_adjustment "
                 "调整 -> 再看图确认，直到满意 -> openlight_export 导出。"
+                "只想看数字、不想把图塞进上下文时用 openlight_measure；"
+                "要把预览存成文件给人看用 openlight_save_preview；"
+                "接手一个正在编辑的现场（人可能刚拖过滑块）先 openlight_history 看发生过什么。"
                 "每一步都会返回画面统计（平均亮度、高光/暗部削波比例），用它判断有没有调过头："
                 "曝光单位是 EV（+1 就是亮度翻倍），色温/对比度一类是 -100~+100 的相对量，"
                 "先小幅试（±10~±30）再迭代。"
+                "收工前可以 openlight_save_recipe 把调整存进 sidecar，下次打开这张照片自动套用。"
             ),
         })
     if method in ("notifications/initialized", "initialized"):

@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+.idea/
+.vscode/
+*.openlight.json
+*.preview.png
+dist/
+build/
+*.spec
